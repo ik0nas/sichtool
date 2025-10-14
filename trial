@@ -1,0 +1,714 @@
+#!/usr/bin/env python3
+"""
+Entities Report Generator
+
+This script reads data from the ENTITIES SQL table and generates a comprehensive Word report.
+It supports SQLite databases and creates formatted reports with tables and styling.
+"""
+
+import sqlite3
+import os
+from datetime import datetime
+from docx import Document
+from docx.shared import Inches, RGBColor
+from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.section import WD_SECTION, WD_ORIENT
+from docx.oxml.shared import OxmlElement, qn
+
+
+class EntitiesReportGenerator:
+    """Generate Word reports from ENTITIES table data."""
+    
+    def __init__(self, db_path):
+        """
+        Initialize the report generator.
+        
+        Args:
+            db_path (str): Path to the SQLite database file
+        """
+        self.db_path = db_path
+        self.document = None
+        
+    def connect_database(self):
+        """Establish connection to SQLite database."""
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.conn.row_factory = sqlite3.Row  # Enable column access by name
+            self.cursor = self.conn.cursor()
+            print(f"Successfully connected to database: {self.db_path}")
+            return True
+        except sqlite3.Error as e:
+            print(f"Error connecting to database: {e}")
+            return False
+    
+    def get_entities_data(self):
+        """Retrieve all data from the ENTITIES table with target names."""
+        try:
+            query = """
+            SELECT e.entityID, e.targetID, e.PLATFORM, e.DATE, e.EMAIL, e.PHONENUMBER, 
+                   e.accountID, e.SCREENAME, e.VANITYNAME, e.IMAGE, e.PRIVATE,
+                   t.NAME as TARGET_NAME
+            FROM ENTITIES e
+            LEFT JOIN TARGETS t ON e.targetID = t.targetID
+            ORDER BY e.DATE DESC, e.PLATFORM, e.entityID
+            """
+            self.cursor.execute(query)
+            entities = self.cursor.fetchall()
+            print(f"Retrieved {len(entities)} entities from database")
+            return entities
+        except sqlite3.Error as e:
+            print(f"Error retrieving entities data: {e}")
+            return []
+    
+    def get_summary_stats(self, entities):
+        """Calculate summary statistics from entities data."""
+        if not entities:
+            return {}
+        
+        stats = {
+            'total_entities': len(entities),
+            'platforms': {},
+            'private_count': 0,
+            'with_email': 0,
+            'with_phone': 0,
+            'with_image': 0,
+            'date_range': {'earliest': None, 'latest': None}
+        }
+        
+        for entity in entities:
+            # Platform statistics
+            platform = entity['PLATFORM']
+            stats['platforms'][platform] = stats['platforms'].get(platform, 0) + 1
+            
+            # Privacy and contact info
+            if entity['PRIVATE']:
+                stats['private_count'] += 1
+            if entity['EMAIL']:
+                stats['with_email'] += 1
+            if entity['PHONENUMBER']:
+                stats['with_phone'] += 1
+            if entity['IMAGE']:
+                stats['with_image'] += 1
+            
+            # Date range
+            # entity_date = entity['DATE']
+            # if entity_date:
+            #     if not stats['date_range']['earliest'] or entity_date < stats['date_range']['earliest']:
+            #         stats['date_range']['earliest'] = entity_date
+            #     if not stats['date_range']['latest'] or entity_date > stats['date_range']['latest']:
+            #         stats['date_range']['latest'] = entity_date
+        
+        return stats
+    
+    def set_font_properties(self, paragraph, font_name='Monaco', font_size=None, is_bold=False):
+        """Helper method to set font properties for a paragraph."""
+        for run in paragraph.runs:
+            run.font.name = font_name
+            run.font.color.rgb = RGBColor(0, 0, 0)  # Black color
+            if font_size:
+                run.font.size = font_size
+            if is_bold:
+                run.bold = True
+
+    def create_document(self):
+        """Create a new Word document with title and basic formatting."""
+        self.document = Document()
+        
+        # Add title
+        title = self.document.add_heading('Entitäten-Bericht', 0)
+        title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        self.set_font_properties(title, font_size=Inches(0.2), is_bold=True)  # 14.4pt - Title stays bold
+        
+        # Add generation timestamp
+        timestamp = self.document.add_paragraph()
+        timestamp.add_run(f'Erstellt am: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
+        timestamp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        timestamp.style = 'Intense Quote'
+        self.set_font_properties(timestamp, is_bold=False)  # Timestamp not bold
+        
+        # Add spacing
+        self.document.add_paragraph()
+    
+    def add_summary_section(self, stats):
+        """Add summary statistics section to the document."""
+        heading = self.document.add_heading('Zusammenfassung der Statistiken', level=1)
+        self.set_font_properties(heading, is_bold=True)
+        
+        # Create summary table
+        table = self.document.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        # Header row
+        header_cells = table.rows[0].cells
+        header_cells[0].text = 'Metrik'
+        header_cells[1].text = 'Wert'
+        
+        # Add summary data
+        summary_data = [
+            ('Gesamtanzahl Entitäten', str(stats['total_entities'])),
+            ('Private Entitäten', str(stats['private_count'])),
+            ('Entitäten mit E-Mail', str(stats['with_email'])),
+            ('Entitäten mit Telefon', str(stats['with_phone'])),
+            ('Entitäten mit Bildern', str(stats['with_image'])),
+        ]
+        
+        if stats['date_range']['earliest']:
+            summary_data.append(('Datumsbereich', f"{stats['date_range']['earliest']} bis {stats['date_range']['latest']}"))
+        
+        for metric, value in summary_data:
+            row_cells = table.add_row().cells
+            row_cells[0].text = metric
+            row_cells[1].text = value
+        
+        # Set smaller font size and Monaco font for summary table
+        for column in table.columns:
+            for cell in column.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.name = 'Monaco'
+                        run.font.size = Inches(0.125)  # 9pt = 0.125 inches
+                        run.font.color.rgb = RGBColor(0, 0, 0)  # Black
+        
+        # Platform breakdown
+        if stats['platforms']:
+            platform_heading = self.document.add_heading('Platform Distribution', level=2)
+            self.set_font_properties(platform_heading, is_bold=True)
+            platform_table = self.document.add_table(rows=1, cols=2)
+            platform_table.style = 'Table Grid'
+            
+            platform_header = platform_table.rows[0].cells
+            platform_header[0].text = 'Plattform'
+            platform_header[1].text = 'Anzahl'
+            
+            for platform, count in sorted(stats['platforms'].items()):
+                platform_row = platform_table.add_row().cells
+                platform_row[0].text = platform
+                platform_row[1].text = str(count)
+            
+            # Set smaller font size and Monaco font for platform table
+            for column in platform_table.columns:
+                for cell in column.cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.name = 'Monaco'
+                            run.font.size = Inches(0.125)  # 9pt = 0.125 inches
+                            run.font.color.rgb = RGBColor(0, 0, 0)  # Black
+        
+        self.document.add_paragraph()
+    
+    def add_individual_entity_blocks(self, entities):
+        """Add individual entity blocks with German descriptions, grouped by target name."""
+        if not entities:
+            return
+        
+        heading = self.document.add_heading('Einzelne Entitäts-Berichte', level=1)
+        self.set_font_properties(heading, is_bold=False)
+        
+        # Group entities by target name
+        entities_by_target = {}
+        for entity in entities:
+            target_name = entity['TARGET_NAME'] or 'Unknown Target'
+            if target_name not in entities_by_target:
+                entities_by_target[target_name] = []
+            entities_by_target[target_name].append(entity)
+        
+        # Sort target names alphabetically
+        sorted_target_names = sorted(entities_by_target.keys())
+        
+        # Process each target group
+        for target_name in sorted_target_names:
+            target_entities = entities_by_target[target_name]
+            
+            # Add target name as subheading
+            target_heading = self.document.add_heading(target_name, level=2)
+            self.set_font_properties(target_heading, is_bold=False)
+            
+            # Process entities for this target
+            for entity in target_entities:
+                # Create heading: <ENTITIES.PLATFORM> (since target name is already the section heading)
+                platform = entity['PLATFORM']
+                entity_heading = self.document.add_heading(platform, level=3)
+                self.set_font_properties(entity_heading, is_bold=False)
+                
+                # Create German description text - build sentence by sentence
+                description_sentences = []
+                
+                # First sentence: Date and Platform
+                # if entity['DATE'] is not None and entity['PLATFORM'] is not None:
+                description_sentences.append(f"Am {entity['DATE']} wurde ein Account auf der Platform {entity['PLATFORM']} festgestellt.")
+                
+                # Second sentence: Account ID
+                if entity['accountID'] is not None:
+                    description_sentences.append(f"Die eindeutige Kennung (UID) {entity['accountID']} konnte ermittelt werden.")
+                
+                # Third sentence: Screenname
+                if entity['SCREENAME'] is not None:
+                    description_sentences.append(f"Als Anzeigename (Screenname) hat der Nutzer {entity['SCREENAME']} ausgewählt.")
+                
+                # Fourth sentence: Vanityname
+                if entity['VANITYNAME'] is not None:
+                    description_sentences.append(f"Als Nutzername (Vanityname) wurde {entity['VANITYNAME']} verwendet.")
+                
+                # Only add description if we have at least one sentence
+                if description_sentences:
+                    description_text = " ".join(description_sentences)
+                    description_para = self.document.add_paragraph(description_text)
+                    description_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY  # Blocksatz
+                    self.set_font_properties(description_para, is_bold=False)  # Description text not bold
+                
+                # Add additional details if available
+                details = []
+                if entity['EMAIL']:
+                    details.append(f"E-Mail: {entity['EMAIL']}")
+                if entity['PHONENUMBER']:
+                    details.append(f"Telefonnummer: {entity['PHONENUMBER']}")
+                if entity['IMAGE']:
+                    details.append("Profilbild: Vorhanden")
+                if entity['PRIVATE']:
+                    details.append("Privater Account: Ja")
+                
+                if details:
+                    details_para = self.document.add_paragraph()
+                    details_run1 = details_para.add_run("Zusätzliche Details: ")
+                    details_run1.bold = False
+                    details_run1.font.name = 'Monaco'
+                    details_run1.font.color.rgb = RGBColor(0, 0, 0)  # Black
+                    
+                    details_run2 = details_para.add_run(" | ".join(details))
+                    details_run2.font.name = 'Monaco'
+                    details_run2.font.color.rgb = RGBColor(0, 0, 0)  # Black
+                    details_run2.bold = False  # Details text not bold
+                
+                # Add spacing between entities
+                self.document.add_paragraph()
+            
+            # Add spacing between target groups
+            self.document.add_paragraph()
+    
+    def add_entities_table(self, entities):
+        """Add detailed entities table to the document in landscape format on a separate page."""
+        if not entities:
+            self.document.add_paragraph('No entities found in the database.')
+            return
+        
+        # Add page break before the table
+        self.document.add_page_break()
+        
+        # Create a new section for landscape orientation
+        new_section = self.document.add_section(WD_SECTION.NEW_PAGE)
+        new_section.orientation = WD_ORIENT.LANDSCAPE
+        
+        # Adjust page margins for landscape
+        new_section.top_margin = Inches(0.5)
+        new_section.bottom_margin = Inches(0.5)
+        new_section.left_margin = Inches(0.5)
+        new_section.right_margin = Inches(0.5)
+        
+        # Add heading
+        heading = self.document.add_heading('Entitäts-Details', level=1)
+        self.set_font_properties(heading, is_bold=True)
+        
+        # Header row
+        headers = ['Plattform', 'Datum', 'E-Mail', 
+                  'Telefon', 'Konto-ID', 'Anzeigename', 'Nutzername', 'Bild', 'Privat']
+        
+        # Create table with correct number of columns
+        table = self.document.add_table(rows=1, cols=len(headers))
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        # Set table to use full width of landscape page
+        table.autofit = False
+        table_width = Inches(10.0)  # Use most of the landscape page width
+        table.width = table_width
+        
+        header_cells = table.rows[0].cells
+        
+        for i, header in enumerate(headers):
+            header_cells[i].text = header
+        
+        # Add entity data
+        for entity in entities:
+            row_cells = table.add_row().cells
+            row_cells[0].text = entity['PLATFORM']
+            row_cells[1].text = entity['DATE']
+            row_cells[2].text = entity['EMAIL'] or 'N/A'
+            row_cells[3].text = entity['PHONENUMBER'] or 'N/A'
+            row_cells[4].text = entity['accountID'] or 'N/A'
+            row_cells[5].text = entity['SCREENAME'] or 'N/A'
+            row_cells[6].text = entity['VANITYNAME'] or 'N/A'
+            row_cells[7].text = 'Yes' if entity['IMAGE'] else 'No'
+            row_cells[8].text = 'Yes' if entity['PRIVATE'] else 'No'
+        
+        # Adjust column widths for landscape format and set font properties
+        column_widths = [
+            Inches(1.0),  # Platform
+            Inches(0.8),  # Date
+            Inches(1.5),  # Email
+            Inches(1.0),  # Phone
+            Inches(1.0),  # Account ID
+            Inches(1.2),  # Screen Name
+            Inches(1.2),  # Vanity Name
+            Inches(0.6),  # Image
+            Inches(0.6),  # Private
+        ]
+        
+        for i, column in enumerate(table.columns):
+            if i < len(column_widths):
+                column.width = column_widths[i]
+            
+            for cell in column.cells:
+                # Set Monaco font, smaller size (7pt), and black color
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.name = 'Monaco'
+                        run.font.size = Inches(0.097)  # 7pt = 0.097 inches (2 sizes smaller than 9pt)
+                        run.font.color.rgb = RGBColor(0, 0, 0)  # Black
+    
+    def add_platform_breakdown(self, entities):
+        """Add platform-specific breakdown sections."""
+        if not entities:
+            return
+        
+        platforms = {}
+        for entity in entities:
+            platform = entity['PLATFORM']
+            if platform not in platforms:
+                platforms[platform] = []
+            platforms[platform].append(entity)
+        
+        heading = self.document.add_heading('Plattform-spezifische Analyse', level=1)
+        self.set_font_properties(heading, is_bold=True)
+        
+        for platform, platform_entities in platforms.items():
+            platform_heading = self.document.add_heading(f'{platform} Entitäten', level=2)
+            self.set_font_properties(platform_heading, is_bold=True)
+            
+            # Platform summary
+            private_count = sum(1 for e in platform_entities if e['PRIVATE'])
+            with_email = sum(1 for e in platform_entities if e['EMAIL'])
+            with_phone = sum(1 for e in platform_entities if e['PHONENUMBER'])
+            
+            summary_text = f"Gesamt: {len(platform_entities)} Entitäten | "
+            summary_text += f"Privat: {private_count} | "
+            summary_text += f"Mit E-Mail: {with_email} | "
+            summary_text += f"Mit Telefon: {with_phone}"
+            
+            summary_para = self.document.add_paragraph(summary_text)
+            summary_para.style = 'Intense Quote'
+            self.set_font_properties(summary_para, is_bold=False)  # Summary text not bold
+            
+            # List individual entities for this platform
+            entity_list_heading = self.document.add_heading('Entitäts-Details', level=3)
+            self.set_font_properties(entity_list_heading, is_bold=True)
+            
+            for i, entity in enumerate(platform_entities, 1):
+                entity_info = []
+                
+                # Add basic information
+                if entity['DATE']:
+                    entity_info.append(f"Datum: {entity['DATE']}")
+                if entity['SCREENAME']:
+                    entity_info.append(f"Anzeigename: {entity['SCREENAME']}")
+                if entity['VANITYNAME']:
+                    entity_info.append(f"Nutzername: {entity['VANITYNAME']}")
+                if entity['accountID']:
+                    entity_info.append(f"Konto-ID: {entity['accountID']}")
+                
+                # Add contact information
+                if entity['EMAIL']:
+                    entity_info.append(f"E-Mail: {entity['EMAIL']}")
+                if entity['PHONENUMBER']:
+                    entity_info.append(f"Telefon: {entity['PHONENUMBER']}")
+                
+                # Add status information
+                status_info = []
+                if entity['IMAGE']:
+                    status_info.append("Profilbild vorhanden")
+                if entity['PRIVATE']:
+                    status_info.append("Privater Account")
+                if status_info:
+                    entity_info.append(f"Status: {', '.join(status_info)}")
+                
+                # Create entity description
+                if entity_info:
+                    entity_text = f"Entität {i}: {' | '.join(entity_info)}"
+                    entity_para = self.document.add_paragraph(entity_text)
+                    self.set_font_properties(entity_para, is_bold=False)
+            
+            # Add spacing between platforms
+            self.document.add_paragraph()
+    
+    def save_report(self, output_path):
+        """Save the document to the specified path."""
+        try:
+            self.document.save(output_path)
+            print(f"Report saved successfully to: {output_path}")
+            return True
+        except Exception as e:
+            print(f"Error saving report: {e}")
+            return False
+    
+    def close_database(self):
+        """Close database connection."""
+        if hasattr(self, 'conn'):
+            self.conn.close()
+            print("Database connection closed")
+    
+    def generate_report(self, output_path=None):
+        """
+        Generate the complete entities report.
+        
+        Args:
+            output_path (str): Path where to save the report. If None, uses default name.
+        """
+        if not output_path:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            output_path = f"osint_report_{timestamp}.docx"
+        
+        try:
+            # Connect to database
+            if not self.connect_database():
+                return False
+            
+            # Get data
+            entities = self.get_entities_data()
+            stats = self.get_summary_stats(entities)
+            
+            # Create document
+            self.create_document()
+            self.add_summary_section(stats)
+            self.add_individual_entity_blocks(entities)
+            self.add_entities_table(entities)
+            self.add_platform_breakdown(entities)
+            
+            # Save report
+            success = self.save_report(output_path)
+            
+            return success
+            
+        except Exception as e:
+            print(f"Error generating report: {e}")
+            return False
+        
+        finally:
+            self.close_database()
+    
+    def generate_target_reports(self, output_directory=None):
+        """
+        Generate separate Word reports for each target name.
+        
+        Args:
+            output_directory (str): Directory where to save the reports. If None, uses current directory.
+        """
+        if not output_directory:
+            output_directory = "."
+        
+        try:
+            # Connect to database
+            if not self.connect_database():
+                return False
+            
+            # Get data
+            entities = self.get_entities_data()
+            
+            # Group entities by target name
+            entities_by_target = {}
+            for entity in entities:
+                target_name = entity['TARGET_NAME'] or 'Unknown Target'
+                if target_name not in entities_by_target:
+                    entities_by_target[target_name] = []
+                entities_by_target[target_name].append(entity)
+            
+            generated_reports = []
+            
+            # Generate report for each target
+            for target_name, target_entities in entities_by_target.items():
+                # Create safe filename from target name
+                safe_target_name = "".join(c for c in target_name if c.isalnum() or c in (' ', '-', '_')).rstrip()
+                safe_target_name = safe_target_name.replace(' ', '_')
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                output_path = os.path.join(output_directory, f"target_report_{safe_target_name}_{timestamp}.docx")
+                
+                # Create new document for this target
+                self.document = Document()
+                
+                # Add target-specific title
+                title = self.document.add_heading(f'OSINT-Bericht: {target_name}', 0)
+                title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                self.set_font_properties(title, font_size=Inches(0.2), is_bold=True)
+                
+                # Add generation timestamp
+                timestamp_para = self.document.add_paragraph()
+                timestamp_para.add_run(f'Erstellt am: {datetime.now().strftime("%d.%m.%Y %H:%M:%S")}')
+                timestamp_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                timestamp_para.style = 'Intense Quote'
+                self.set_font_properties(timestamp_para, is_bold=False)
+                
+                # Add spacing
+                self.document.add_paragraph()
+                
+                # Add target-specific summary
+                self.add_target_summary_section(target_name, target_entities)
+                
+                # Add individual entity blocks for this target only
+                self.add_individual_entity_blocks(target_entities)
+                
+                # Add entities table for this target only
+                self.add_entities_table(target_entities)
+                
+                # Add platform breakdown for this target only
+                self.add_platform_breakdown(target_entities)
+                
+                # Save report
+                success = self.save_report(output_path)
+                if success:
+                    generated_reports.append(output_path)
+                    print(f"Generated report for target '{target_name}': {output_path}")
+                else:
+                    print(f"Failed to generate report for target '{target_name}'")
+            
+            return generated_reports
+            
+        except Exception as e:
+            print(f"Error generating target reports: {e}")
+            return []
+        
+        finally:
+            self.close_database()
+    
+    def add_target_summary_section(self, target_name, entities):
+        """Add summary statistics section for a specific target."""
+        if not entities:
+            return
+        
+        heading = self.document.add_heading(f'Zusammenfassung für {target_name}', level=1)
+        self.set_font_properties(heading, is_bold=True)
+        
+        # Create summary table
+        table = self.document.add_table(rows=1, cols=2)
+        table.style = 'Table Grid'
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        
+        # Header row
+        header_cells = table.rows[0].cells
+        header_cells[0].text = 'Metrik'
+        header_cells[1].text = 'Wert'
+        
+        # Calculate target-specific statistics
+        stats = {
+            'total_entities': len(entities),
+            'platforms': {},
+            'private_count': 0,
+            'with_email': 0,
+            'with_phone': 0,
+            'with_image': 0,
+        }
+        
+        for entity in entities:
+            # Platform statistics
+            platform = entity['PLATFORM']
+            stats['platforms'][platform] = stats['platforms'].get(platform, 0) + 1
+            
+            # Privacy and contact info
+            if entity['PRIVATE']:
+                stats['private_count'] += 1
+            if entity['EMAIL']:
+                stats['with_email'] += 1
+            if entity['PHONENUMBER']:
+                stats['with_phone'] += 1
+            if entity['IMAGE']:
+                stats['with_image'] += 1
+        
+        # Add summary data
+        summary_data = [
+            ('Gesamtanzahl Entitäten', str(stats['total_entities'])),
+            ('Private Entitäten', str(stats['private_count'])),
+            ('Entitäten mit E-Mail', str(stats['with_email'])),
+            ('Entitäten mit Telefon', str(stats['with_phone'])),
+            ('Entitäten mit Bildern', str(stats['with_image'])),
+        ]
+        
+        for metric, value in summary_data:
+            row_cells = table.add_row().cells
+            row_cells[0].text = metric
+            row_cells[1].text = value
+        
+        # Set smaller font size and Monaco font for summary table
+        for column in table.columns:
+            for cell in column.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.name = 'Monaco'
+                        run.font.size = Inches(0.125)  # 9pt = 0.125 inches
+                        run.font.color.rgb = RGBColor(0, 0, 0)  # Black
+        
+        # Platform breakdown for this target
+        if stats['platforms']:
+            self.document.add_heading('Plattform-Verteilung', level=2)
+            platform_table = self.document.add_table(rows=1, cols=2)
+            platform_table.style = 'Table Grid'
+            
+            platform_header = platform_table.rows[0].cells
+            platform_header[0].text = 'Plattform'
+            platform_header[1].text = 'Anzahl'
+            
+            for platform, count in sorted(stats['platforms'].items()):
+                platform_row = platform_table.add_row().cells
+                platform_row[0].text = platform
+                platform_row[1].text = str(count)
+            
+            # Set smaller font size and Monaco font for platform table
+            for column in platform_table.columns:
+                for cell in column.cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.name = 'Monaco'
+                            run.font.size = Inches(0.125)  # 9pt = 0.125 inches
+                            run.font.color.rgb = RGBColor(0, 0, 0)  # Black
+        
+        self.document.add_paragraph()
+
+
+def main():
+    """Main function to run the report generator."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Generate Word report from ENTITIES table')
+    parser.add_argument('database', help='Path to SQLite database file')
+    parser.add_argument('-o', '--output', help='Output file path for the report (single report) or directory (target reports)')
+    parser.add_argument('-t', '--target-reports', action='store_true', help='Generate separate reports for each target name')
+    parser.add_argument('-l', '--landscape', action='store_true', help='Generate landscape format for the report')
+    parser.add_argument('-p', '--portrait', action='store_true', help='Generate portrait format for the report')
+    
+    args = parser.parse_args()
+    
+    # Check if database exists
+    if not os.path.exists(args.database):
+        print(f"Error: Database file '{args.database}' not found.")
+        return 1
+    
+    # Generate report
+    generator = EntitiesReportGenerator(args.database)
+    
+    if args.target_reports:
+        # Generate separate reports for each target
+        generated_reports = generator.generate_target_reports(args.output)
+        if generated_reports:
+            print(f"\nSuccessfully generated {len(generated_reports)} target reports:")
+            for report_path in generated_reports:
+                print(f"  - {report_path}")
+            return 0
+        else:
+            print("Failed to generate any target reports.")
+            return 1
+    else:
+        # Generate single report
+        success = generator.generate_report(args.output)
+        return 0 if success else 1
+
+
+if __name__ == "__main__":
+    exit(main())

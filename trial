@@ -14,6 +14,8 @@ from docx.shared import Inches, RGBColor
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.section import WD_SECTION
+from docx.oxml.ns import nsdecls
+from docx.oxml import parse_xml
 
 
 class EntitiesReportGenerator:
@@ -301,7 +303,7 @@ class EntitiesReportGenerator:
                         # Fügt nur ein Trennzeichen hinzu, wenn es nicht das erste Detail ist
                         nonlocal is_first_detail
                         if not is_first_detail:
-                            details_para.add_run("  |  ")
+                            details_para.add_run(" ")
                         is_first_detail = False
                     
                     if os.path.exists(image_path):
@@ -454,42 +456,119 @@ class EntitiesReportGenerator:
             summary_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             self.set_font_properties(summary_para, font_size=Inches(0.16), is_bold=True)  # Summary text not bold
             
+            
+            # ====================================================================================
             for i, entity in enumerate(platform_entities, 1):
+                # Erstelle eine Tabelle mit 1 Zeile und 2 Spalten für das Layout
+                table = self.document.add_table(rows=1, cols=2)
+                table.autofit = False
+                table.columns[0].width = Inches(4.5) # Breite für Text
+                table.columns[1].width = Inches(2.0) # Breite für Bild
+
+                # Mache die Tabellenränder unsichtbar
+                tbl = table._tbl
+                tblBorders = parse_xml(
+                    f'<w:tblBorders {nsdecls("w")}><w:top w:val="none"/><w:left w:val="none"/>'
+                    f'<w:bottom w:val="none"/><w:right w:val="none"/><w:insideH w:val="none"/>'
+                    f'<w:insideV w:val="none"/></w:tblBorders>'
+                )
+                tbl.append(tblBorders)
+
+                # Definiere die linke und rechte Zelle
+                left_cell = table.cell(0, 0)
+                right_cell = table.cell(0, 1)
+
+                # --- FÜLLE DIE LINKE ZELLE (TEXT) ---
+                # Hauptzeile für die Entität
+                if entity['DATE']:
+                    p_main = left_cell.add_paragraph(f"Entität {i} (Datum: {entity['DATE']}):")
+                else:
+                    p_main = left_cell.add_paragraph(f"Entität {i}:")
+                self.set_font_properties(p_main)
+
+                # Sammle Details für die Aufzählungsliste
+                details_for_list = []
+                if entity['SCREENAME']: details_for_list.append(f"Anzeigename: {entity['SCREENAME']}")
+                if entity['VANITYNAME']: details_for_list.append(f"Nutzername: {entity['VANITYNAME']}")
+                if entity['accountID']: details_for_list.append(f"Konto-ID: {entity['accountID']}")
+                if entity['EMAIL']: details_for_list.append(f"E-Mail: {entity['EMAIL']}")
+                if entity['PHONENUMBER']: details_for_list.append(f"Telefon: {entity['PHONENUMBER']}")
                 
-                entity_info = []
-                # Add basic information
-                # if entity['DATE']:
-                #     entity_info.append(f"Datum: {entity['DATE']}")
-                if entity['SCREENAME']:
-                    entity_info.append(f"Anzeigename: {entity['SCREENAME']}")
-                if entity['VANITYNAME']:
-                    entity_info.append(f"Nutzername: {entity['VANITYNAME']}")
-                    
-                unique_info = []
-                if entity['accountID']:
-                    unique_info.append(f"Konto-ID: {entity['accountID']}")
-                
-                extra_info = []
-                # Add contact information
-                if entity['EMAIL']:
-                    extra_info.append(f"mit der E-Mail-Adresse: {entity['EMAIL']}")
-                if entity['PHONENUMBER']:
-                    extra_info.append(f"mit der Rufnummer: {entity['PHONENUMBER']}")
-                
-                # Add status information
                 status_info = []
-                if entity['IMAGE']:
-                    status_info.append("Profilbild vorhanden")
-                if entity['PRIVATE']:
-                    status_info.append("Privater Account")
-                # if status_info:
-                #     entity_info.append(f"Status: \n{', '.join(status_info)}")
+                if entity['IMAGE']: status_info.append("Profilbild vorhanden")
+                if entity['PRIVATE']: status_info.append("Privater Account")
+                if status_info: details_for_list.append(f"Status: {', '.join(status_info)}")
+
+                # Erstelle die Aufzählungspunkte in der linken Zelle
+                for detail_text in details_for_list:
+                    p_list = left_cell.add_paragraph(detail_text, style='List Bullet')
+                    p_list.paragraph_format.left_indent = Inches(0.25)
+                    self.set_font_properties(p_list)
+
+                # --- FÜLLE DIE RECHTE ZELLE (BILD) ---
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                image_path = os.path.join(script_dir, 'images', f"{entity['entityID']}.jpg")
+
+                if os.path.exists(image_path):
+                    try:
+                        # Füge das Bild in einem neuen Absatz in der rechten Zelle ein
+                        p_img = right_cell.add_paragraph()
+                        run = p_img.add_run()
+                        run.add_picture(image_path, width=Inches(1.8))
+                        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        right_cell.vertical_alignment = 1 # 1 = Center
+                    except Exception as e:
+                        right_cell.text = f"(Bild konnte nicht geladen werden: {e})"
+            
+            
+            # for i, entity in enumerate(platform_entities, 1):
+            #     # Hauptzeile für die Entität mit dem Datum
+            #     entity_para = self.document.add_paragraph()
+            #     entity_para.add_run(f"Entität {i}")
+            #     if entity['DATE']:
+            #         entity_para.add_run(" (Datum: ")
+            #         run_date = entity_para.add_run(str(entity['DATE']))
+            #         run_date.bold = True
+            #         entity_para.add_run("):")
+            #     else:
+            #         entity_para.add_run(":")
+            #     self.set_font_properties(entity_para, is_bold=False)
+
+            #     # Sammle alle anderen Details für die Aufzählungsliste
+            #     details_for_list = []
+            #     if entity['SCREENAME']:
+            #         details_for_list.append(("Anzeigename", entity['SCREENAME'], True)) # True = Wert fett drucken
+            #     if entity['VANITYNAME']:
+            #         details_for_list.append(("Nutzername", entity['VANITYNAME'], True))
+            #     if entity['accountID']:
+            #         details_for_list.append(("Konto-ID", entity['accountID'], True))
+            #     if entity['EMAIL']:
+            #         details_for_list.append(("E-Mail", entity['EMAIL'], True))
+            #     if entity['PHONENUMBER']:
+            #         details_for_list.append(("Telefon", entity['PHONENUMBER'], True))
                 
-                # Create entity description
-                if entity_info:
-                    entity_text = f"\nFestgestellt wurde am {entity['DATE']} die Entität {i} {' '.join(extra_info)} {'\n '} {''.join(unique_info)} {'\n\n'} {' | '.join(entity_info)} {'\n '} {''.join(status_info)}"
-                    entity_para = self.document.add_paragraph(entity_text)
-                    self.set_font_properties(entity_para, is_bold=False)
+            #     # Status-Informationen sammeln
+            #     status_info = []
+            #     if entity['IMAGE']:
+            #         status_info.append("Profilbild vorhanden")
+            #     if entity['PRIVATE']:
+            #         status_info.append("Privater Account")
+            #     if status_info:
+            #         # Status-Wert ist abgeleitet, daher nicht fett drucken (False)
+            #         details_for_list.append(("Status", ", ".join(status_info), False))
+
+            #     # Erstelle die Aufzählungspunkte im Word-Dokument
+            #     for label, value, is_bold in details_for_list:
+            #         # Füge für jeden Punkt einen neuen Absatz mit dem Listen-Stil hinzu
+            #         p = self.document.add_paragraph(style='List Bullet')
+            #         p.add_run(f"{label}: ")
+            #         run_value = p.add_run(str(value))
+            #         if is_bold:
+            #             run_value.bold = False
+                    
+            #         # Sorge für einheitliche Schriftart und Einrückung
+            #         p.paragraph_format.left_indent = Inches(0.5)
+            #         self.set_font_properties(p, is_bold=False)
             
             # Add spacing between platforms
             self.document.add_paragraph()
@@ -833,4 +912,5 @@ def main():
 
 if __name__ == "__main__":
     exit(main())
+
 

@@ -252,57 +252,83 @@ class EntitiesReportGenerator:
                     print(f"    -> Fehlerdetails: {e}")
                     print("-------------------------------------------------------------")
                 
-                # Create German description text - build sentence by sentence
-                description_sentences = []
+                description_para = self.document.add_paragraph()
+                description_para.add_run('\nAm ')
+                run_date = description_para.add_run(str(entity['DATE']))
+                run_date.bold = True
                 
-                # First sentence: Date and Platform
-                # if entity['DATE'] is not None and entity['PLATFORM'] is not None:
-                description_sentences.append(f"\nAm {entity['DATE']} wurde ein Account auf der Platform {entity['PLATFORM']} festgestellt.")
-                
-                # Second sentence: Account ID
+                description_para.add_run(' wurde ein Account auf der Plattform ')
+                run_platform = description_para.add_run(str(entity['PLATFORM']))
+                run_platform.bold = True
+                description_para.add_run(' festgestellt. ')
+
                 if entity['accountID'] is not None:
-                    description_sentences.append(f"Die eindeutige Kennung (UID) {entity['accountID']} konnte ermittelt werden.")
+                    description_para.add_run('Die eindeutige Kennung (UID) ')
+                    run_acc_id = description_para.add_run(str(entity['accountID']))
+                    run_acc_id.bold = True
+                    description_para.add_run(' konnte ermittelt werden. ')
                 
-                # Third sentence: Screenname
                 if entity['SCREENAME'] is not None:
-                    description_sentences.append(f"Als Anzeigename (Screenname) hat der Nutzer {entity['SCREENAME']} ausgewählt.")
-                
-                # Fourth sentence: Vanityname
+                    description_para.add_run('Als Anzeigename (Screenname) hat der Nutzer ')
+                    run_screen = description_para.add_run(str(entity['SCREENAME']))
+                    run_screen.bold = True
+                    description_para.add_run(' ausgewählt. ')
+
                 if entity['VANITYNAME'] is not None:
-                    description_sentences.append(f"Als Nutzername (Vanityname) wurde {entity['VANITYNAME']} verwendet.")
+                    description_para.add_run('Als Nutzername (Vanityname) wurde ')
+                    run_vanity = description_para.add_run(str(entity['VANITYNAME']))
+                    run_vanity.bold = True
+                    description_para.add_run(' verwendet.')
+
+                description_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY  # Blocksatz
+                self.set_font_properties(description_para, is_bold=False)
+                                
+                has_details = any([
+                    entity['EMAIL'], 
+                    entity['PHONENUMBER'], 
+                    os.path.exists(image_path), 
+                    entity['IMAGE'], 
+                    entity['PRIVATE']
+                ])
                 
-                # Only add description if we have at least one sentence
-                if description_sentences:
-                    description_text = " ".join(description_sentences)
-                    description_para = self.document.add_paragraph(description_text)
-                    description_para.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY  # Blocksatz
-                    self.set_font_properties(description_para, is_bold=False)  # Description text not bold
-                
-                # Add additional details if available
-                details = []
-                if entity['EMAIL']:
-                    details.append(f"E-Mail: {entity['EMAIL']}")
-                if entity['PHONENUMBER']:
-                    details.append(f"Telefonnummer: {entity['PHONENUMBER']}")
-                # Ändere die Logik für das Profilbild, da es jetzt direkt angezeigt wird
-                if os.path.exists(os.path.join('images', f"{entity['entityID']}.jpg")):
-                    details.append("Profilbild: Siehe oben")
-                elif entity['IMAGE']:
-                    details.append("Profilbild: Link vorhanden, Bild nicht lokal gespeichert")
-                if entity['PRIVATE']:
-                    details.append("Privater Account: Ja")
-                
-                if details:
+                if has_details:
                     details_para = self.document.add_paragraph()
-                    details_run1 = details_para.add_run("\nZusätzliche Details: \n\n")
-                    details_run1.bold = False
-                    details_run1.font.name = 'Monaco'
-                    details_run1.font.color.rgb = RGBColor(0, 0, 0)  # Black
+                    # details_para.add_run("\nZusätzliche Details: \n\n")
                     
-                    details_run2 = details_para.add_run("  |  ".join(details))
-                    details_run2.font.name = 'Monaco'
-                    details_run2.font.color.rgb = RGBColor(0, 0, 0)  # Black
-                    details_run2.bold = False  # Details text not bold
+                    is_first_detail = True
+                    
+                    def add_separator():
+                        # Fügt nur ein Trennzeichen hinzu, wenn es nicht das erste Detail ist
+                        nonlocal is_first_detail
+                        if not is_first_detail:
+                            details_para.add_run("  |  ")
+                        is_first_detail = False
+                    
+                    if os.path.exists(image_path):
+                        add_separator()
+                        details_para.add_run("Profilbild: ")
+                        run_image = details_para.add_run("siehe oben")
+                        run_image.bold = True
+
+                    if entity['EMAIL']:
+                        add_separator()
+                        details_para.add_run("E-Mail: ")
+                        run_email = details_para.add_run(entity['EMAIL'])
+                        run_email.bold = True
+
+                    if entity['PHONENUMBER']:
+                        add_separator()
+                        details_para.add_run("Telefonnummer: ")
+                        run_phone = details_para.add_run(entity['PHONENUMBER'])
+                        run_phone.bold = True
+
+                    if entity['PRIVATE']:
+                        add_separator()
+                        details_para.add_run("Privater Account: ")
+                        run_private = details_para.add_run("Ja") # Abgeleiteter DB-Inhalt, fett
+                        run_private.bold = True
+                    
+                    self.set_font_properties(details_para, is_bold=False)
                 
                 # Add spacing between entities
                 self.document.add_paragraph()
@@ -421,35 +447,34 @@ class EntitiesReportGenerator:
             
             summary_text = f"Gesamt: {len(platform_entities)} Entitäten | "
             summary_text += f"Privat: {private_count} | "
-            summary_text += f"Mit E-Mail: {with_email} | "
-            summary_text += f"Mit Telefon: {with_phone}"
+            summary_text += f"mit E-Mail: {with_email} | "
+            summary_text += f"mit Telefon: {with_phone}"
             
             summary_para = self.document.add_paragraph(summary_text)
             summary_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
             self.set_font_properties(summary_para, font_size=Inches(0.16), is_bold=True)  # Summary text not bold
             
-            # List individual entities for this platform
-            # entity_list_heading = self.document.add_heading('Entitäts-Details', level=3)
-            # self.set_font_properties(entity_list_heading, is_bold=False)
-            
             for i, entity in enumerate(platform_entities, 1):
-                entity_info = []
                 
+                entity_info = []
                 # Add basic information
-                if entity['DATE']:
-                    entity_info.append(f"Datum: {entity['DATE']}")
+                # if entity['DATE']:
+                #     entity_info.append(f"Datum: {entity['DATE']}")
                 if entity['SCREENAME']:
                     entity_info.append(f"Anzeigename: {entity['SCREENAME']}")
                 if entity['VANITYNAME']:
                     entity_info.append(f"Nutzername: {entity['VANITYNAME']}")
+                    
+                unique_info = []
                 if entity['accountID']:
-                    entity_info.append(f"Konto-ID: {entity['accountID']}")
+                    unique_info.append(f"Konto-ID: {entity['accountID']}")
                 
+                extra_info = []
                 # Add contact information
                 if entity['EMAIL']:
-                    entity_info.append(f"E-Mail: {entity['EMAIL']}")
+                    extra_info.append(f"mit der E-Mail-Adresse: {entity['EMAIL']}")
                 if entity['PHONENUMBER']:
-                    entity_info.append(f"Telefon: {entity['PHONENUMBER']}")
+                    extra_info.append(f"mit der Rufnummer: {entity['PHONENUMBER']}")
                 
                 # Add status information
                 status_info = []
@@ -457,12 +482,12 @@ class EntitiesReportGenerator:
                     status_info.append("Profilbild vorhanden")
                 if entity['PRIVATE']:
                     status_info.append("Privater Account")
-                if status_info:
-                    entity_info.append(f"Status: {', '.join(status_info)}")
+                # if status_info:
+                #     entity_info.append(f"Status: \n{', '.join(status_info)}")
                 
                 # Create entity description
                 if entity_info:
-                    entity_text = f"Entität {i}: {' | '.join(entity_info)}"
+                    entity_text = f"\nFestgestellt wurde am {entity['DATE']} die Entität {i} {' '.join(extra_info)} {'\n '} {''.join(unique_info)} {'\n\n'} {' | '.join(entity_info)} {'\n '} {''.join(status_info)}"
                     entity_para = self.document.add_paragraph(entity_text)
                     self.set_font_properties(entity_para, is_bold=False)
             

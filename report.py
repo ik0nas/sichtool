@@ -390,11 +390,11 @@ class EntitiesReportGenerator:
             row_cells = table.add_row().cells
             row_cells[0].text = entity['PLATFORM']
             row_cells[1].text = entity['DATE']
-            row_cells[2].text = entity['EMAIL'] or ' N / A '
-            row_cells[3].text = entity['PHONENUMBER'] or ' N / A '
-            row_cells[4].text = entity['accountID'] or ' N / A '
-            row_cells[5].text = entity['SCREENAME'] or ' N / A '
-            row_cells[6].text = entity['VANITYNAME'] or ' N / A '
+            row_cells[2].text = entity['EMAIL'] or 'n/a'
+            row_cells[3].text = entity['PHONENUMBER'] or 'n/a'
+            row_cells[4].text = entity['accountID'] or 'n/a'
+            row_cells[5].text = entity['SCREENAME'] or 'n/a'
+            row_cells[6].text = entity['VANITYNAME'] or 'n/a'
             row_cells[7].text = 'Ja' if entity['IMAGE'] else 'Nein'
             row_cells[8].text = 'Ja' if entity['PRIVATE'] else 'Nein'
         
@@ -453,11 +453,9 @@ class EntitiesReportGenerator:
             summary_text += f"mit Telefon: {with_phone}"
             
             summary_para = self.document.add_paragraph(summary_text)
-            summary_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            summary_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
             self.set_font_properties(summary_para, font_size=Inches(0.16), is_bold=True)  # Summary text not bold
             
-            
-            # ====================================================================================
             for i, entity in enumerate(platform_entities, 1):
                 # Erstelle eine Tabelle mit 1 Zeile und 2 Spalten für das Layout
                 table = self.document.add_table(rows=1, cols=2)
@@ -519,56 +517,6 @@ class EntitiesReportGenerator:
                         right_cell.vertical_alignment = 1 # 1 = Center
                     except Exception as e:
                         right_cell.text = f"(Bild konnte nicht geladen werden: {e})"
-            
-            
-            # for i, entity in enumerate(platform_entities, 1):
-            #     # Hauptzeile für die Entität mit dem Datum
-            #     entity_para = self.document.add_paragraph()
-            #     entity_para.add_run(f"Entität {i}")
-            #     if entity['DATE']:
-            #         entity_para.add_run(" (Datum: ")
-            #         run_date = entity_para.add_run(str(entity['DATE']))
-            #         run_date.bold = True
-            #         entity_para.add_run("):")
-            #     else:
-            #         entity_para.add_run(":")
-            #     self.set_font_properties(entity_para, is_bold=False)
-
-            #     # Sammle alle anderen Details für die Aufzählungsliste
-            #     details_for_list = []
-            #     if entity['SCREENAME']:
-            #         details_for_list.append(("Anzeigename", entity['SCREENAME'], True)) # True = Wert fett drucken
-            #     if entity['VANITYNAME']:
-            #         details_for_list.append(("Nutzername", entity['VANITYNAME'], True))
-            #     if entity['accountID']:
-            #         details_for_list.append(("Konto-ID", entity['accountID'], True))
-            #     if entity['EMAIL']:
-            #         details_for_list.append(("E-Mail", entity['EMAIL'], True))
-            #     if entity['PHONENUMBER']:
-            #         details_for_list.append(("Telefon", entity['PHONENUMBER'], True))
-                
-            #     # Status-Informationen sammeln
-            #     status_info = []
-            #     if entity['IMAGE']:
-            #         status_info.append("Profilbild vorhanden")
-            #     if entity['PRIVATE']:
-            #         status_info.append("Privater Account")
-            #     if status_info:
-            #         # Status-Wert ist abgeleitet, daher nicht fett drucken (False)
-            #         details_for_list.append(("Status", ", ".join(status_info), False))
-
-            #     # Erstelle die Aufzählungspunkte im Word-Dokument
-            #     for label, value, is_bold in details_for_list:
-            #         # Füge für jeden Punkt einen neuen Absatz mit dem Listen-Stil hinzu
-            #         p = self.document.add_paragraph(style='List Bullet')
-            #         p.add_run(f"{label}: ")
-            #         run_value = p.add_run(str(value))
-            #         if is_bold:
-            #             run_value.bold = False
-                    
-            #         # Sorge für einheitliche Schriftart und Einrückung
-            #         p.paragraph_format.left_indent = Inches(0.5)
-            #         self.set_font_properties(p, is_bold=False)
             
             # Add spacing between platforms
             self.document.add_paragraph()
@@ -877,11 +825,8 @@ def main():
     
     parser = argparse.ArgumentParser(description='Generate Word report from ENTITIES table')
     parser.add_argument('database', nargs='?', default='database.sqlite', help='Path to SQLite database file (default: database.sqlite)')
-    # parser.add_argument('database', help='Path to SQLite database file')
     parser.add_argument('-o', '--output', help='Output file path for the report (single report) or directory (target reports)')
     parser.add_argument('-t', '--target-reports', action='store_true', help='Generate separate reports for each target name')
-    # parser.add_argument('-l', '--landscape', action='store_true', help='Generate landscape format for the report')
-    # parser.add_argument('-p', '--portrait', action='store_true', help='Generate portrait format for the report')
     
     args = parser.parse_args()
     
